@@ -2,9 +2,11 @@
   "name": "01-rate-limiter",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "main.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx watch main.ts",
+    "start": "tsx main.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -13,5 +15,11 @@
   "dependencies": {
     "express": "^5.3.0",
     "ioredis": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
