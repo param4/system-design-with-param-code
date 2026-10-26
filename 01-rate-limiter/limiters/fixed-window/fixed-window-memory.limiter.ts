@@ -11,12 +11,16 @@ export class FixedWindowMemoryLimiter implements RateLimiter {
     private readonly windowMs: number;
     private readonly now: () => number;
     private readonly counters = new Map<string, WindowCounter>();
-    private readonly sweeper: NodeJS.Timeout;
+    private sweeper: NodeJS.Timeout | undefined;
 
     constructor(options: FixedWindowOptions) {
         this.limit = options.limit;
         this.windowMs = options.windowMs;
         this.now = options.now ?? Date.now;
+    }
+
+    public async init(): Promise<void> {
+        if (this.sweeper) return;
         this.sweeper = setInterval(()=> this.sweep(), this.windowMs).unref();
     }
 
@@ -70,5 +74,6 @@ export class FixedWindowMemoryLimiter implements RateLimiter {
 
     public async close(): Promise<void> {
         clearInterval(this.sweeper);
+        this.sweeper = undefined;
     }
 }
