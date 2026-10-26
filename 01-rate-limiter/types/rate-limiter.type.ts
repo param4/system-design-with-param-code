@@ -1,6 +1,7 @@
 export type RateLimiterDecision = {
     allowed: boolean;
-    requestsRemaining: number;
+    limit: number;
     retryAfterSeconds: number;
-    resetAfterMs: number;
+    requestsRemaining: number;
+    resetAfterSeconds: number;
 }
