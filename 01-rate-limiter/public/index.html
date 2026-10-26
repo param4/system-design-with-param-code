@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate Limiter Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #666d7a; --border: #e2e5ea;
+    --ok: #16a34a; --blocked: #dc2626; --accent: #2563eb; --grid: #e9ecf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --text: #e8eaee; --muted: #9aa1ad; --border: #2a2f39;
+      --ok: #22c55e; --blocked: #f87171; --accent: #60a5fa; --grid: #232833;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--border); background: transparent; color: var(--text); padding: 7px 14px; border-radius: 999px; cursor: pointer; font: inherit; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .config { color: var(--muted); margin-top: 10px; font-size: 14px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+  .buttons { display: flex; gap: 8px; }
+  button.run { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.run:disabled { opacity: .5; cursor: wait; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 14px; font: inherit; cursor: pointer; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat { flex: 1 1 140px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+  .stat .n { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .k { color: var(--muted); font-size: 13px; }
+  .ok { color: var(--ok); } .blocked { color: var(--blocked); }
+  .chart-wrap { position: relative; height: 380px; }
+  .status { color: var(--muted); font-size: 14px; min-height: 20px; margin-top: 8px; }
+  .log { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 240px; overflow: auto; margin: 0; white-space: pre; }
+  .legend { color: var(--muted); font-size: 13px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Rate Limiter Lab</h1>
+  <p class="sub">Fire requests at a limiter and watch what gets through.</p>
+
+  <section class="panel">
+    <div class="tabs" id="tabs"></div>
+    <div class="config" id="config"></div>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <label>Mode
+        <select id="mode">
+          <option value="burst">Burst (all at once)</option>
+          <option value="edge">Edge burst (around a window boundary)</option>
+          <option value="steady">Steady rate</option>
+        </select>
+      </label>
+      <label>Requests per burst <input id="n" type="number" min="1" value="10"></label>
+      <label class="steady-only">Rate (req/s) <input id="rate" type="number" min="1" value="2"></label>
+      <label class="steady-only">Duration (s) <input id="duration" type="number" min="1" value="15"></label>
+      <label>User <input id="user" value="alice"></label>
+      <label>Server ports <input id="ports" value=""></label>
+      <div class="buttons">
+        <button class="run" id="run">Run</button>
+        <button class="ghost" id="clear">Clear</button>
+      </div>
+    </div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="stats">
+    <div class="stat"><div class="n ok" id="allowed">0</div><div class="k">allowed (200)</div></div>
+    <div class="stat"><div class="n blocked" id="blocked">0</div><div class="k">blocked (429)</div></div>
+    <div class="stat"><div class="n" id="perServer">–</div><div class="k">allowed per server</div></div>
+  </section>
+
+  <section class="panel" style="margin-top:14px">
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <div class="legend">Each dot is a request: x = when it was sent, y = remaining quota after it. Red ✕ = blocked. Shape = server. Dashed lines = window boundaries.</div>
+  </section>
+
+  <section class="panel">
+    <pre class="log" id="log"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SHAPES = ["circle", "triangle", "rect", "rectRot"];
+
+$("ports").value = location.port || "3000";
+
+let algos = [];
+let current = null;
+let t0 = 0;
+let stats = { allowed: 0, blocked: 0, perPort: {} };
+
+// ---------- chart ----------
+const boundaries = {
+  id: "boundaries",
+  afterDraw(chart) {
+    const windowMs = current?.config.windowMs;
+    if (!windowMs || !t0) return;
+    const { ctx, chartArea: a, scales: { x } } = chart;
+    ctx.save();
+    ctx.strokeStyle = css("--muted");
+    ctx.setLineDash([5, 5]);
+    for (let b = Math.ceil(t0 / windowMs) * windowMs; (b - t0) / 1000 <= x.max; b += windowMs) {
+      const px = x.getPixelForValue((b - t0) / 1000);
+      if (px < a.left || px > a.right) continue;
+      ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
+    }
+    ctx.restore();
+  },
+};
+
+const pointStyle = (ctx) => ctx.raw ? SHAPES[ctx.raw.portIdx % SHAPES.length] : "circle";
+
+const chart = new Chart($("chart"), {
+  type: "scatter",
+  data: {
+    datasets: [
+      { label: "allowed", data: [], backgroundColor: css("--ok"), borderColor: css("--ok"), pointRadius: 6, pointStyle },
+      { label: "blocked", data: [], backgroundColor: css("--blocked"), borderColor: css("--blocked"), pointRadius: 7, pointStyle: "crossRot", borderWidth: 2 },
+    ],
+  },
+  options: {
+    animation: false,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { labels: { color: css("--text") } },
+      tooltip: { callbacks: { label: (c) => `#${c.raw.i} :${c.raw.port} → ${c.raw.status} (remaining ${c.raw.remaining})` } },
+    },
+    scales: {
+      x: { type: "linear", min: 0, title: { display: true, text: "seconds since start", color: css("--muted") }, ticks: { color: css("--muted") }, grid: { color: css("--grid") } },
+      y: { min: -0.5, title: { display: true, text: "remaining", color: css("--muted") }, ticks: { color: css("--muted"), precision: 0 }, grid: { color: css("--grid") } },
+    },
+  },
+  plugins: [boundaries],
+});
+
+// ---------- requests ----------
+function ports() {
+  return $("ports").value.split(",").map((p) => p.trim()).filter(Boolean);
+}
+
+function urlFor(port) {
+  const path = `/api/${current.name}`;
+  return port === location.port ? path : `http://localhost:${port}${path}`;
+}
+
+let seq = 0;
+async function fire() {
+  const i = ++seq;
+  const list = ports();
+  const portIdx = (i - 1) % list.length;
+  const port = list[portIdx];
+  const sentAt = Date.now();
+  try {
+    const res = await fetch(urlFor(port), { headers: { "x-user-id": $("user").value } });
+    const remaining = Number(res.headers.get("RateLimit-Remaining") ?? 0);
+    const retry = res.headers.get("Retry-After");
+    record({ i, port, portIdx, status: res.status, remaining, x: (sentAt - t0) / 1000 });
+    log(`#${String(i).padStart(3)}  :${port}  ${res.status}  remaining=${remaining}${retry ? `  retry-after=${retry}s` : ""}`);
+  } catch (err) {
+    log(`#${String(i).padStart(3)}  :${port}  network error (is the server on :${port} running?)`);
+  }
+}
+
+function record(p) {
+  const allowed = p.status === 200;
+  const point = { ...p, y: allowed ? p.remaining : 0 };
+  chart.data.datasets[allowed ? 0 : 1].data.push(point);
+  chart.options.scales.x.max = Math.max(chart.options.scales.x.max ?? 0, Math.ceil(p.x + 1));
+  chart.options.scales.y.max = Math.max(chart.options.scales.y.max ?? 1, (current.config.limit ?? 5) + 0.5);
+  chart.update();
+
+  if (allowed) {
+    stats.allowed++;
+    stats.perPort[p.port] = (stats.perPort[p.port] ?? 0) + 1;
+  } else {
+    stats.blocked++;
+  }
+  $("allowed").textContent = stats.allowed;
+  $("blocked").textContent = stats.blocked;
+  $("perServer").textContent = Object.entries(stats.perPort).map(([port, n]) => `:${port} ${n}`).join("  ·  ") || "–";
+}
+
+function log(line) {
+  $("log").textContent = line + "\n" + $("log").textContent;
+}
+
+const burst = (n) => Promise.all(Array.from({ length: n }, fire));
+
+async function run() {
+  clear();
+  $("run").disabled = true;
+  const n = Number($("n").value);
+  const mode = $("mode").value;
+  try {
+    if (mode === "burst") {
+      t0 = Date.now();
+      $("status").textContent = `Firing ${n} requests at once…`;
+      await burst(n);
+    } else if (mode === "edge") {
+      const windowMs = current.config.windowMs;
+      if (!windowMs) { $("status").textContent = "Edge burst needs a windowed algorithm."; return; }
+      $("status").textContent = "Waiting for the next window boundary…";
+      const untilBoundary = windowMs - (Date.now() % windowMs);
+      if (untilBoundary < 1500) await sleep(untilBoundary + 50);
+      t0 = Date.now();
+      await sleep(windowMs - (Date.now() % windowMs) - 300);
+      $("status").textContent = `Burst 1: ${n} requests just before the boundary…`;
+      await burst(n);
+      await sleep(windowMs - (Date.now() % windowMs) + 50);
+      $("status").textContent = `Burst 2: ${n} requests just after it…`;
+      await burst(n);
+    } else {
+      const rate = Number($("rate").value);
+      const duration = Number($("duration").value);
+      t0 = Date.now();
+      $("status").textContent = `Sending ${rate} req/s for ${duration}s…`;
+      const pending = [];
+      for (let k = 0; k < rate * duration; k++) {
+        pending.push(fire());
+        await sleep(1000 / rate);
+      }
+      await Promise.all(pending);
+    }
+    $("status").textContent = `Done: ${stats.allowed} allowed, ${stats.blocked} blocked.`;
+  } finally {
+    $("run").disabled = false;
+  }
+}
+
+function clear() {
+  seq = 0; t0 = 0;
+  stats = { allowed: 0, blocked: 0, perPort: {} };
+  chart.data.datasets.forEach((d) => (d.data = []));
+  delete chart.options.scales.x.max;
+  delete chart.options.scales.y.max;
+  chart.update();
+  ["allowed", "blocked"].forEach((id) => ($(id).textContent = "0"));
+  $("perServer").textContent = "–";
+  $("log").textContent = "";
+  $("status").textContent = "";
+}
+
+// ---------- algorithm tabs ----------
+function select(algo) {
+  current = algo;
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.name === algo.name));
+  $("config").textContent = `GET /api/${algo.name}  ·  ` + Object.entries(algo.config).map(([k, v]) => `${k} = ${v}`).join("  ·  ");
+  history.replaceState(null, "", `#${algo.name}`);
+  clear();
+}
+
+function syncModeFields() {
+  const steady = $("mode").value === "steady";
+  document.querySelectorAll(".steady-only").forEach((el) => (el.style.display = steady ? "" : "none"));
+}
+
+async function boot() {
+  algos = await (await fetch("/meta/limiters")).json();
+  for (const algo of algos) {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.textContent = algo.label;
+    b.dataset.name = algo.name;
+    b.onclick = () => select(algo);
+    $("tabs").append(b);
+  }
+  select(algos.find((a) => a.name === location.hash.slice(1)) ?? algos[0]);
+}
+
+$("run").onclick = run;
+$("clear").onclick = clear;
+$("mode").onchange = syncModeFields;
+syncModeFields();
+boot();
+</script>
+</body>
+</html>

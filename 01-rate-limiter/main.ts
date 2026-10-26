@@ -1,30 +1,21 @@
-import express from "express";
-import { FixedWindowMemoryLimiter } from "./limiters/fixed-window/fixed-window-memory.limiter";
-import { rateLimit } from "./middlewares";
+import { createApp } from "./app";
+import { createLimiters } from "./limiters/registry";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
-// 1. Build and start the limiter before taking traffic
-const limiter = new FixedWindowMemoryLimiter({ limit: 5, windowMs: 10_000 });
-await limiter.init?.();
+// 1. Build and start the limiters before taking traffic
+const limiters = createLimiters();
+for (const { limiter } of limiters) await limiter.init?.();
 
-// 2. Wire it in
-const app = express();
-app.use("/api", rateLimit(limiter));
-
-app.get("/api", (req, res) => {
-  res.json({ ok: true, server: PORT });
-});
-
-// 3. Serve
-const server = app.listen(PORT, () => {
+// 2. Serve
+const server = createApp(limiters, PORT).listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
 
-// 4. Shut down in reverse order
+// 3. Shut down in reverse order
 const shutdown = async () => {
   server.close();
-  await limiter.close?.();
+  for (const { limiter } of limiters) await limiter.close?.();
 };
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

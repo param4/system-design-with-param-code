@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch main.ts",
     "start": "tsx main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "fire": "tsx scripts/fire.ts"
   },
   "keywords": [],
   "author": "",
