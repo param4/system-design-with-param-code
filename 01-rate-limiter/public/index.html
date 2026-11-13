@@ -22,7 +22,9 @@
   h1 { font-size: 22px; margin: 0 0 4px; }
   .sub { color: var(--muted); margin: 0 0 16px; }
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
-  .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tabs { display: flex; flex-direction: column; gap: 8px; }
+  .tab-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .store { width: 160px; color: var(--muted); font-size: 13px; }
   .tab { border: 1px solid var(--border); background: transparent; color: var(--text); padding: 7px 14px; border-radius: 999px; cursor: pointer; font: inherit; }
   .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .config { color: var(--muted); margin-top: 10px; font-size: 14px; }
@@ -182,7 +184,7 @@ function record(p) {
   const point = { ...p, y: allowed ? p.remaining : 0 };
   chart.data.datasets[allowed ? 0 : 1].data.push(point);
   chart.options.scales.x.max = Math.max(chart.options.scales.x.max ?? 0, Math.ceil(p.x + 1));
-  chart.options.scales.y.max = Math.max(chart.options.scales.y.max ?? 1, (current.config.limit ?? 5) + 0.5);
+  chart.options.scales.y.max = Math.max(chart.options.scales.y.max ?? 1, (current.config.limit ?? current.config.capacity ?? 5) + 0.5);
   chart.update();
 
   if (allowed) {
@@ -270,6 +272,24 @@ function syncModeFields() {
   document.querySelectorAll(".steady-only").forEach((el) => (el.style.display = steady ? "" : "none"));
 }
 
+// One row of tabs per store, so memory and Redis versions of an algorithm line up
+const STORES = { "memory": "Memory", "redis-naive": "Redis naive (broken)", "redis-lua": "Redis Lua (atomic)" };
+
+function rowFor(store) {
+  let row = document.querySelector(`.tab-row[data-store="${store}"]`);
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "tab-row";
+    row.dataset.store = store;
+    const name = document.createElement("span");
+    name.className = "store";
+    name.textContent = STORES[store] ?? store;
+    row.append(name);
+    $("tabs").append(row);
+  }
+  return row;
+}
+
 async function boot() {
   algos = await (await fetch("/meta/limiters")).json();
   for (const algo of algos) {
@@ -278,7 +298,7 @@ async function boot() {
     b.textContent = algo.label;
     b.dataset.name = algo.name;
     b.onclick = () => select(algo);
-    $("tabs").append(b);
+    rowFor(algo.store).append(b);
   }
   select(algos.find((a) => a.name === location.hash.slice(1)) ?? algos[0]);
 }

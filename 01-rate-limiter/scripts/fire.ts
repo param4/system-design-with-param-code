@@ -4,6 +4,7 @@
  *   npm run fire                                   10 requests to :3000
  *   npm run fire -- --n 20 --ports 3001,3002       split across 2 servers
  *   npm run fire -- --edge 10000 --n 5             edge burst around a window boundary
+ *   npm run fire -- --path /api/token-bucket-redis-lua --ports 3001,3002
  */
 import { parseArgs } from "node:util";
 
@@ -20,15 +21,21 @@ const { values } = parseArgs({
 const n = Number(values.n);
 const ports = values.ports.split(",").map(Number);
 const counts = new Map<number, number>();
+const countsByPort = new Map(ports.map((port) => [port, new Map<number, number>()]));
+
+const add = (map: Map<number, number>, status: number) => map.set(status, (map.get(status) ?? 0) + 1);
+const summarize = (map: Map<number, number>) =>
+    [...map].sort(([a], [b]) => a - b).map(([status, count]) => `${status} × ${count}`).join("   ");
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fire(i: number): Promise<void> {
-    const port = ports[i % ports.length];
+    const port = ports[i % ports.length]!;
     const res = await fetch(`http://localhost:${port}${values.path}`, {
         headers: { "x-user-id": values.user },
     });
-    counts.set(res.status, (counts.get(res.status) ?? 0) + 1);
+    add(counts, res.status);
+    add(countsByPort.get(port)!, res.status);
 
     const remaining = res.headers.get("ratelimit-remaining") ?? "-";
     const retry = res.headers.get("retry-after");
@@ -55,5 +62,9 @@ if (values.edge) {
     await burst(0);
 }
 
-const summary = [...counts].sort().map(([status, count]) => `${status} × ${count}`).join("   ");
-console.log(`\n${summary}`);
+console.log(`\ntotal   ${summarize(counts)}`);
+if (ports.length > 1) {
+    for (const [port, byStatus] of countsByPort) {
+        console.log(`:${port}   ${summarize(byStatus)}`);
+    }
+}

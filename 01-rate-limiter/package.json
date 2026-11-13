@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "tsx watch main.ts",
     "start": "tsx main.ts",
+    "start:3001": "PORT=3001 tsx main.ts",
+    "start:3002": "PORT=3002 tsx main.ts",
     "typecheck": "tsc --noEmit",
     "fire": "tsx scripts/fire.ts"
   },

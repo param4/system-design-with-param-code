@@ -14,7 +14,7 @@ export function demoRoutes(limiters: LimiterEntry[]): Router {
     router.use(cors);
 
     router.get("/meta/limiters", (req, res) => {
-        res.json(limiters.map(({ name, label, config }) => ({ name, label, config })));
+        res.json(limiters.map(({ name, label, store, config }) => ({ name, label, store, config })));
     });
 
     return router;
