@@ -31,18 +31,8 @@ export class SlidingCounterMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
-        const currentTime = this.now();
-        const counter = this.countersFor(key, currentTime);
-
-        // Weight the previous window by how much of it is still inside the sliding window
-        const elapsed = (currentTime - counter.windowStart) / this.windowMs;
-        const estimate = counter.previous * (1 - elapsed) + counter.current;
-        const resetAfterSeconds = DecisionUtil.toSeconds(counter.windowStart + this.windowMs - currentTime);
-
-        if (estimate + 1 > this.limit) return DecisionUtil.block(this.limit, resetAfterSeconds, this.retryAfterSeconds(counter, elapsed, resetAfterSeconds));
-
-        counter.current += 1;
-        return DecisionUtil.allow(this.limit, Math.floor(this.limit - (estimate + 1)), resetAfterSeconds);
+        // TODO: write it on video
+        throw new Error("Not implemented yet");
     }
 
     /**

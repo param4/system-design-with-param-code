@@ -27,12 +27,8 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
-        const queue = this.queueFor(key);
-
-        if (queue.length >= this.capacity) return DecisionUtil.block(this.capacity, this.drainSeconds(queue.length), this.drainSeconds(1));
-
-        // Wait in line: the worker resolves this when it lets the request out
-        return new Promise<RateLimiterDecision>((resolve) => queue.push({ resolve }));
+        // TODO: write it on video
+        throw new Error("Not implemented yet");
     }
 
     private queueFor(key: string): Waiting[] {

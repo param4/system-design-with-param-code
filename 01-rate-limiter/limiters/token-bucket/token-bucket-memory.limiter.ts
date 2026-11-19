@@ -33,17 +33,8 @@ export class TokenBucketMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
-        const currentTime = this.now();
-        const bucket = this.bucketFor(key, currentTime);
-
-        // Lazy refill: no timer, just add what the elapsed time earned
-        bucket.tokens = Math.min(this.capacity, bucket.tokens + (currentTime - bucket.lastRefill) * this.refillPerMs);
-        bucket.lastRefill = currentTime;
-
-        if (bucket.tokens < 1) return DecisionUtil.block(this.capacity, this.secondsToEarn(this.capacity - bucket.tokens), this.secondsToEarn(1 - bucket.tokens));
-
-        bucket.tokens -= 1;
-        return DecisionUtil.allow(this.capacity, Math.floor(bucket.tokens), this.secondsToEarn(this.capacity - bucket.tokens));
+        // TODO: write it on video
+        throw new Error("Not implemented yet");
     }
 
     /**

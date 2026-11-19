@@ -22,13 +22,8 @@ export class SlidingLogMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
-        const currentTime = this.now();
-        const log = this.recentLog(key, currentTime);
-
-        if (log.length >= this.limit) return DecisionUtil.block(this.limit, this.resetAfterSeconds(log, currentTime));
-
-        log.push(currentTime);
-        return DecisionUtil.allow(this.limit, this.limit - log.length, this.resetAfterSeconds(log, currentTime));
+        // TODO: write it on video
+        throw new Error("Not implemented yet");
     }
 
     /**
