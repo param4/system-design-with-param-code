@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
+import { allow, block, toSeconds } from "../decision";
 import type { RateLimiterDecision, SlidingCounterOptions } from "../../types";
 
 type WindowCounters = {
@@ -31,44 +32,34 @@ export class SlidingCounterMemoryLimiter implements RateLimiter {
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const currentTime = this.now();
-        const windowStart = this.windowStartOf(currentTime);
+        const counter = this.countersFor(key, currentTime);
 
-        let counter = this.counters.get(key);
-        if (!counter) {
-            counter = { windowStart, previous: 0, current: 0 };
-            this.counters.set(key, counter);
-        }
+        // Weight the previous window by how much of it is still inside the sliding window
+        const elapsed = (currentTime - counter.windowStart) / this.windowMs;
+        const estimate = counter.previous * (1 - elapsed) + counter.current;
+        const resetAfterSeconds = toSeconds(counter.windowStart + this.windowMs - currentTime);
 
-        // New window: the current count becomes the previous one (or 0 if a window was skipped)
+        if (estimate + 1 > this.limit) return block(this.limit, resetAfterSeconds, this.retryAfterSeconds(counter, elapsed, resetAfterSeconds));
+
+        counter.current += 1;
+        return allow(this.limit, Math.floor(this.limit - (estimate + 1)), resetAfterSeconds);
+    }
+
+    /**
+     * The key's counters, moved on to the window `time` falls in:
+     * the current count becomes the previous one (or 0 if a whole window was skipped).
+     */
+    private countersFor(key: string, time: number): WindowCounters {
+        const windowStart = this.windowStartOf(time);
+        const counter = this.counters.get(key) ?? { windowStart, previous: 0, current: 0 };
+        this.counters.set(key, counter);
+
         if (counter.windowStart !== windowStart) {
             counter.previous = counter.windowStart === windowStart - this.windowMs ? counter.current : 0;
             counter.current = 0;
             counter.windowStart = windowStart;
         }
-
-        // Weight the previous window by how much of it is still inside the sliding window
-        const elapsed = (currentTime - windowStart) / this.windowMs;
-        const estimate = counter.previous * (1 - elapsed) + counter.current;
-
-        const resetAfterSeconds = Math.ceil((windowStart + this.windowMs - currentTime) / 1000);
-
-        const hasQuota = estimate + 1 <= this.limit;
-        if (!hasQuota) return {
-            allowed: false,
-            limit: this.limit,
-            requestsRemaining: 0,
-            resetAfterSeconds,
-            retryAfterSeconds: this.retryAfterSeconds(counter, elapsed, resetAfterSeconds),
-        };
-
-        counter.current += 1;
-        return {
-            allowed: true,
-            limit: this.limit,
-            requestsRemaining: Math.floor(this.limit - (estimate + 1)),
-            resetAfterSeconds,
-            retryAfterSeconds: 0,
-        };
+        return counter;
     }
 
     /**

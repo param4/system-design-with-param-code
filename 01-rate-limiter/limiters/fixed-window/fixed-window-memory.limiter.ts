@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
+import { allow, block, toSeconds } from "../decision";
 import type { FixedWindowOptions, RateLimiterDecision } from "../../types";
 
 type WindowCounter = {
@@ -30,36 +31,26 @@ export class FixedWindowMemoryLimiter implements RateLimiter {
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const currentTime = this.now();
-        const windowStart = this.windowStartOf(currentTime);
-        
-        let counter = this.counters.get(key);
-        if (!counter || counter.windowStart !== windowStart) {
-            counter = {
-                windowStart,
-                count: 0
-            }
-            this.counters.set(key, counter);
-        }
+        const counter = this.counterFor(key, currentTime);
+        const resetAfterSeconds = toSeconds(counter.windowStart + this.windowMs - currentTime);
 
-        const resetAfterSeconds = Math.ceil((counter.windowStart + this.windowMs - currentTime)/1000);
-
-        const hasQuota = counter.count < this.limit;
-        if (!hasQuota) return {
-            allowed: false,
-            limit: this.limit,
-            requestsRemaining: 0,
-            resetAfterSeconds,
-            retryAfterSeconds: resetAfterSeconds
-        };
+        if (counter.count >= this.limit) return block(this.limit, resetAfterSeconds);
 
         counter.count += 1;
-        return {
-            allowed: true,
-            limit: this.limit,
-            requestsRemaining: this.limit - counter.count,
-            resetAfterSeconds,
-            retryAfterSeconds: 0,
-        };
+        return allow(this.limit, this.limit - counter.count, resetAfterSeconds);
+    }
+
+    /**
+     * The key's counter for the window `time` falls in. A new window starts again from 0.
+     */
+    private counterFor(key: string, time: number): WindowCounter {
+        const windowStart = this.windowStartOf(time);
+        let counter = this.counters.get(key);
+        if (!counter || counter.windowStart !== windowStart) {
+            counter = { windowStart, count: 0 };
+            this.counters.set(key, counter);
+        }
+        return counter;
     }
 
     private sweep() : void {

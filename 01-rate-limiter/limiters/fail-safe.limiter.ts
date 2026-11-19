@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../interfaces";
+import { allow, block } from "./decision";
 import type { FailMode, FailSafeOptions, RateLimiterDecision } from "../types";
 
 /**
@@ -36,16 +37,8 @@ export class FailSafeLimiter implements RateLimiter {
                 this.failing = true;
                 console.error(`Rate limiter store failed, failing ${this.mode}: ${err instanceof Error ? err.message : err}`);
             }
-            return this.mode === "open" ? this.allow() : this.reject();
+            return this.mode === "open" ? allow(this.limit, this.limit, 0) : block(this.limit, 1);
         }
-    }
-
-    private allow(): RateLimiterDecision {
-        return { allowed: true, limit: this.limit, requestsRemaining: this.limit, resetAfterSeconds: 0, retryAfterSeconds: 0 };
-    }
-
-    private reject(): RateLimiterDecision {
-        return { allowed: false, limit: this.limit, requestsRemaining: 0, resetAfterSeconds: 1, retryAfterSeconds: 1 };
     }
 
     public async close(): Promise<void> {

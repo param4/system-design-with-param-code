@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
+import { allow, block, toSeconds } from "../decision";
 import type { RateLimiterDecision, SlidingLogOptions } from "../../types";
 
 export class SlidingLogMemoryLimiter implements RateLimiter {
@@ -22,25 +23,29 @@ export class SlidingLogMemoryLimiter implements RateLimiter {
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const currentTime = this.now();
+        const log = this.recentLog(key, currentTime);
+
+        if (log.length >= this.limit) return block(this.limit, this.resetAfterSeconds(log, currentTime));
+
+        log.push(currentTime);
+        return allow(this.limit, this.limit - log.length, this.resetAfterSeconds(log, currentTime));
+    }
+
+    /**
+     * The key's log with requests older than the window dropped.
+     */
+    private recentLog(key: string, time: number): number[] {
         const log = this.logs.get(key) ?? [];
         this.logs.set(key, log);
+        while (log.length && log[0]! <= time - this.windowMs) log.shift();
+        return log;
+    }
 
-        // Drop requests that left the window
-        while (log.length && log[0]! <= currentTime - this.windowMs) log.shift();
-
-        const hasQuota = log.length < this.limit;
-        if (hasQuota) log.push(currentTime);
-
-        // The window frees a slot when its oldest request drops out
-        const resetAfterSeconds = Math.ceil((log[0]! + this.windowMs - currentTime) / 1000);
-
-        return {
-            allowed: hasQuota,
-            limit: this.limit,
-            requestsRemaining: this.limit - log.length,
-            resetAfterSeconds,
-            retryAfterSeconds: hasQuota ? 0 : resetAfterSeconds,
-        };
+    /**
+     * A slot frees up when the oldest request leaves the window.
+     */
+    private resetAfterSeconds(log: number[], time: number): number {
+        return toSeconds(log[0]! + this.windowMs - time);
     }
 
     private sweep(): void {

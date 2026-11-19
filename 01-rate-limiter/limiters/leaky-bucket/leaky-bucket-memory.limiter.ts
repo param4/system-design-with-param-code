@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
+import { allow, block, toSeconds } from "../decision";
 import type { LeakyBucketOptions, RateLimiterDecision } from "../../types";
 
 type Waiting = {
@@ -26,21 +27,25 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
+        const queue = this.queueFor(key);
+
+        if (queue.length >= this.capacity) return block(this.capacity, this.drainSeconds(queue.length), this.drainSeconds(1));
+
+        // Wait in line: the worker resolves this when it lets the request out
+        return new Promise<RateLimiterDecision>((resolve) => queue.push({ resolve }));
+    }
+
+    private queueFor(key: string): Waiting[] {
         const queue = this.queues.get(key) ?? [];
         this.queues.set(key, queue);
+        return queue;
+    }
 
-        // Seconds until the queue has drained n requests
-        const drainSeconds = (n: number) => Math.ceil((n * this.leakEveryMs) / 1000);
-
-        if (queue.length >= this.capacity) return {
-            allowed: false,
-            limit: this.capacity,
-            requestsRemaining: 0,
-            resetAfterSeconds: drainSeconds(queue.length),
-            retryAfterSeconds: drainSeconds(1),
-        };
-
-        return new Promise<RateLimiterDecision>((resolve) => queue.push({ resolve }));
+    /**
+     * Seconds until the queue has let out n requests.
+     */
+    private drainSeconds(n: number): number {
+        return toSeconds(n * this.leakEveryMs);
     }
 
     private leak(): void {
@@ -50,13 +55,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
                 this.queues.delete(key);
                 continue;
             }
-            next.resolve({
-                allowed: true,
-                limit: this.capacity,
-                requestsRemaining: this.capacity - queue.length,
-                resetAfterSeconds: Math.ceil((queue.length * this.leakEveryMs) / 1000),
-                retryAfterSeconds: 0,
-            });
+            next.resolve(allow(this.capacity, this.capacity - queue.length, this.drainSeconds(queue.length)));
         }
     }
 
@@ -67,7 +66,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
         // Don't leave waiting requests hanging on shutdown
         for (const queue of this.queues.values()) {
             for (const waiting of queue) {
-                waiting.resolve({ allowed: false, limit: this.capacity, requestsRemaining: 0, resetAfterSeconds: 1, retryAfterSeconds: 1 });
+                waiting.resolve(block(this.capacity, 1));
             }
         }
         this.queues.clear();

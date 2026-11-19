@@ -1,4 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
+import { allow, block, toSeconds } from "../decision";
 import type { RateLimiterDecision, TokenBucketOptions } from "../../types";
 
 type Bucket = {
@@ -33,25 +34,32 @@ export class TokenBucketMemoryLimiter implements RateLimiter {
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const currentTime = this.now();
-        const bucket = this.buckets.get(key) ?? { tokens: this.capacity, lastRefill: currentTime };
-        this.buckets.set(key, bucket);
+        const bucket = this.bucketFor(key, currentTime);
 
         // Lazy refill: no timer, just add what the elapsed time earned
         bucket.tokens = Math.min(this.capacity, bucket.tokens + (currentTime - bucket.lastRefill) * this.refillPerMs);
         bucket.lastRefill = currentTime;
 
-        const hasQuota = bucket.tokens >= 1;
-        if (hasQuota) bucket.tokens -= 1;
+        if (bucket.tokens < 1) return block(this.capacity, this.secondsToEarn(this.capacity - bucket.tokens), this.secondsToEarn(1 - bucket.tokens));
 
-        const toSeconds = (tokensMissing: number) => Math.ceil(tokensMissing / this.refillPerMs / 1000);
+        bucket.tokens -= 1;
+        return allow(this.capacity, Math.floor(bucket.tokens), this.secondsToEarn(this.capacity - bucket.tokens));
+    }
 
-        return {
-            allowed: hasQuota,
-            limit: this.capacity,
-            requestsRemaining: Math.floor(bucket.tokens),
-            resetAfterSeconds: toSeconds(this.capacity - bucket.tokens),
-            retryAfterSeconds: hasQuota ? 0 : toSeconds(1 - bucket.tokens),
-        };
+    /**
+     * The key's bucket; a new user starts with a full one.
+     */
+    private bucketFor(key: string, time: number): Bucket {
+        const bucket = this.buckets.get(key) ?? { tokens: this.capacity, lastRefill: time };
+        this.buckets.set(key, bucket);
+        return bucket;
+    }
+
+    /**
+     * Seconds until the refill adds this many tokens.
+     */
+    private secondsToEarn(tokens: number): number {
+        return toSeconds(tokens / this.refillPerMs);
     }
 
     private sweep(): void {
