@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
-import { allow, block, toSeconds } from "../decision";
+import { DecisionUtil } from "../decision.util";
 import type { FixedWindowOptions, RateLimiterDecision } from "../../types";
 
 type WindowCounter = {
@@ -32,12 +32,12 @@ export class FixedWindowMemoryLimiter implements RateLimiter {
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const currentTime = this.now();
         const counter = this.counterFor(key, currentTime);
-        const resetAfterSeconds = toSeconds(counter.windowStart + this.windowMs - currentTime);
+        const resetAfterSeconds = DecisionUtil.toSeconds(counter.windowStart + this.windowMs - currentTime);
 
-        if (counter.count >= this.limit) return block(this.limit, resetAfterSeconds);
+        if (counter.count >= this.limit) return DecisionUtil.block(this.limit, resetAfterSeconds);
 
         counter.count += 1;
-        return allow(this.limit, this.limit - counter.count, resetAfterSeconds);
+        return DecisionUtil.allow(this.limit, this.limit - counter.count, resetAfterSeconds);
     }
 
     /**

@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
-import { allow, block, toSeconds } from "../decision";
+import { DecisionUtil } from "../decision.util";
 import type { RateLimiterDecision, SlidingLogOptions } from "../../types";
 
 export class SlidingLogMemoryLimiter implements RateLimiter {
@@ -25,10 +25,10 @@ export class SlidingLogMemoryLimiter implements RateLimiter {
         const currentTime = this.now();
         const log = this.recentLog(key, currentTime);
 
-        if (log.length >= this.limit) return block(this.limit, this.resetAfterSeconds(log, currentTime));
+        if (log.length >= this.limit) return DecisionUtil.block(this.limit, this.resetAfterSeconds(log, currentTime));
 
         log.push(currentTime);
-        return allow(this.limit, this.limit - log.length, this.resetAfterSeconds(log, currentTime));
+        return DecisionUtil.allow(this.limit, this.limit - log.length, this.resetAfterSeconds(log, currentTime));
     }
 
     /**
@@ -45,7 +45,7 @@ export class SlidingLogMemoryLimiter implements RateLimiter {
      * A slot frees up when the oldest request leaves the window.
      */
     private resetAfterSeconds(log: number[], time: number): number {
-        return toSeconds(log[0]! + this.windowMs - time);
+        return DecisionUtil.toSeconds(log[0]! + this.windowMs - time);
     }
 
     private sweep(): void {

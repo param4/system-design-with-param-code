@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
-import { allow, block, toSeconds } from "../decision";
+import { DecisionUtil } from "../decision.util";
 import type { RateLimiterDecision, SlidingCounterOptions } from "../../types";
 
 type WindowCounters = {
@@ -37,12 +37,12 @@ export class SlidingCounterMemoryLimiter implements RateLimiter {
         // Weight the previous window by how much of it is still inside the sliding window
         const elapsed = (currentTime - counter.windowStart) / this.windowMs;
         const estimate = counter.previous * (1 - elapsed) + counter.current;
-        const resetAfterSeconds = toSeconds(counter.windowStart + this.windowMs - currentTime);
+        const resetAfterSeconds = DecisionUtil.toSeconds(counter.windowStart + this.windowMs - currentTime);
 
-        if (estimate + 1 > this.limit) return block(this.limit, resetAfterSeconds, this.retryAfterSeconds(counter, elapsed, resetAfterSeconds));
+        if (estimate + 1 > this.limit) return DecisionUtil.block(this.limit, resetAfterSeconds, this.retryAfterSeconds(counter, elapsed, resetAfterSeconds));
 
         counter.current += 1;
-        return allow(this.limit, Math.floor(this.limit - (estimate + 1)), resetAfterSeconds);
+        return DecisionUtil.allow(this.limit, Math.floor(this.limit - (estimate + 1)), resetAfterSeconds);
     }
 
     /**

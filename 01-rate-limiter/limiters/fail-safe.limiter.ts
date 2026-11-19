@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../interfaces";
-import { allow, block } from "./decision";
+import { DecisionUtil } from "./decision.util";
 import type { FailMode, FailSafeOptions, RateLimiterDecision } from "../types";
 
 /**
@@ -37,7 +37,7 @@ export class FailSafeLimiter implements RateLimiter {
                 this.failing = true;
                 console.error(`Rate limiter store failed, failing ${this.mode}: ${err instanceof Error ? err.message : err}`);
             }
-            return this.mode === "open" ? allow(this.limit, this.limit, 0) : block(this.limit, 1);
+            return this.mode === "open" ? DecisionUtil.allow(this.limit, this.limit, 0) : DecisionUtil.block(this.limit, 1);
         }
     }
 

@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
-import { allow, block, toSeconds } from "../decision";
+import { DecisionUtil } from "../decision.util";
 import type { RateLimiterDecision, TokenBucketOptions } from "../../types";
 
 type Bucket = {
@@ -40,10 +40,10 @@ export class TokenBucketMemoryLimiter implements RateLimiter {
         bucket.tokens = Math.min(this.capacity, bucket.tokens + (currentTime - bucket.lastRefill) * this.refillPerMs);
         bucket.lastRefill = currentTime;
 
-        if (bucket.tokens < 1) return block(this.capacity, this.secondsToEarn(this.capacity - bucket.tokens), this.secondsToEarn(1 - bucket.tokens));
+        if (bucket.tokens < 1) return DecisionUtil.block(this.capacity, this.secondsToEarn(this.capacity - bucket.tokens), this.secondsToEarn(1 - bucket.tokens));
 
         bucket.tokens -= 1;
-        return allow(this.capacity, Math.floor(bucket.tokens), this.secondsToEarn(this.capacity - bucket.tokens));
+        return DecisionUtil.allow(this.capacity, Math.floor(bucket.tokens), this.secondsToEarn(this.capacity - bucket.tokens));
     }
 
     /**
@@ -59,7 +59,7 @@ export class TokenBucketMemoryLimiter implements RateLimiter {
      * Seconds until the refill adds this many tokens.
      */
     private secondsToEarn(tokens: number): number {
-        return toSeconds(tokens / this.refillPerMs);
+        return DecisionUtil.toSeconds(tokens / this.refillPerMs);
     }
 
     private sweep(): void {

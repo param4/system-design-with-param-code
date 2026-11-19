@@ -1,5 +1,5 @@
 import type { RateLimiter } from "../../interfaces";
-import { allow, block, toSeconds } from "../decision";
+import { DecisionUtil } from "../decision.util";
 import type { LeakyBucketOptions, RateLimiterDecision } from "../../types";
 
 type Waiting = {
@@ -29,7 +29,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
     async isAllowed(key: string): Promise<RateLimiterDecision> {
         const queue = this.queueFor(key);
 
-        if (queue.length >= this.capacity) return block(this.capacity, this.drainSeconds(queue.length), this.drainSeconds(1));
+        if (queue.length >= this.capacity) return DecisionUtil.block(this.capacity, this.drainSeconds(queue.length), this.drainSeconds(1));
 
         // Wait in line: the worker resolves this when it lets the request out
         return new Promise<RateLimiterDecision>((resolve) => queue.push({ resolve }));
@@ -45,7 +45,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
      * Seconds until the queue has let out n requests.
      */
     private drainSeconds(n: number): number {
-        return toSeconds(n * this.leakEveryMs);
+        return DecisionUtil.toSeconds(n * this.leakEveryMs);
     }
 
     private leak(): void {
@@ -55,7 +55,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
                 this.queues.delete(key);
                 continue;
             }
-            next.resolve(allow(this.capacity, this.capacity - queue.length, this.drainSeconds(queue.length)));
+            next.resolve(DecisionUtil.allow(this.capacity, this.capacity - queue.length, this.drainSeconds(queue.length)));
         }
     }
 
@@ -66,7 +66,7 @@ export class LeakyBucketMemoryLimiter implements RateLimiter {
         // Don't leave waiting requests hanging on shutdown
         for (const queue of this.queues.values()) {
             for (const waiting of queue) {
-                waiting.resolve(block(this.capacity, 1));
+                waiting.resolve(DecisionUtil.block(this.capacity, 1));
             }
         }
         this.queues.clear();
