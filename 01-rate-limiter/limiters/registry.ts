@@ -5,6 +5,7 @@ import { FailSafeLimiter } from "./fail-safe.limiter";
 import { FixedWindowMemoryLimiter } from "./fixed-window/fixed-window-memory.limiter";
 import { FixedWindowRedisNaiveLimiter } from "./fixed-window/fixed-window-redis-naive.limiter";
 import { FixedWindowRedisLimiter } from "./fixed-window/fixed-window-redis.limiter";
+import { NoLimitLimiter } from "./no-limit/no-limit.limiter";
 import { LeakyBucketMemoryLimiter } from "./leaky-bucket/leaky-bucket-memory.limiter";
 import { LeakyBucketRedisLimiter } from "./leaky-bucket/leaky-bucket-redis.limiter";
 import { SlidingCounterMemoryLimiter } from "./sliding-counter/sliding-counter-memory.limiter";
@@ -20,11 +21,11 @@ import { TokenBucketRedisLimiter } from "./token-bucket/token-bucket-redis.limit
  * and its tab on the demo page follow automatically.
  */
 export function createLimiters(redis: Redis): LimiterEntry[] {
-    const fixedWindow = { limit: 5, windowMs: 10_000 };
-    const slidingLog = { limit: 5, windowMs: 10_000 };
-    const slidingCounter = { limit: 5, windowMs: 10_000 };
-    const tokenBucket = { capacity: 5, refillPerSecond: 0.5 };
-    const leakyBucket = { capacity: 5, leakPerSecond: 2 };
+    const fixedWindow = { limit: 5, windowMs: 5_000 };
+    const slidingLog = { limit: 5, windowMs: 5_000 };
+    const slidingCounter = { limit: 5, windowMs: 5_000 };
+    const tokenBucket = { capacity: 5, refillPerSecond: 1 };
+    const leakyBucket = { capacity: 5, leakPerSecond: 1 };
     // Naive version only: a pause between read and write so the race shows on one laptop
     const tokenBucketNaive = { ...tokenBucket, gapMs: 50 };
 
@@ -33,6 +34,8 @@ export function createLimiters(redis: Redis): LimiterEntry[] {
     const failSafe = (limiter: RateLimiter, limit: number) => new FailSafeLimiter(limiter, { mode: failMode, limit });
 
     return [
+        { name: "no-limit", label: "No limit", store: "none", config: {}, limiter: new NoLimitLimiter() },
+
         { name: "fixed-window", label: "Fixed window", store: "memory", config: fixedWindow, limiter: new FixedWindowMemoryLimiter(fixedWindow) },
         { name: "sliding-log", label: "Sliding log", store: "memory", config: slidingLog, limiter: new SlidingLogMemoryLimiter(slidingLog) },
         { name: "sliding-counter", label: "Sliding counter", store: "memory", config: slidingCounter, limiter: new SlidingCounterMemoryLimiter(slidingCounter) },

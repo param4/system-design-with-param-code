@@ -40,7 +40,10 @@
   .stat .n { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .stat .k { color: var(--muted); font-size: 13px; }
   .ok { color: var(--ok); } .blocked { color: var(--blocked); }
-  .chart-wrap { position: relative; height: 380px; }
+  .chart-wrap { position: relative; height: 380px; cursor: grab; touch-action: pan-y; }
+  .chart-wrap.dragging { cursor: grabbing; }
+  .chart-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 6px; }
+  .chart-bar .legend { margin-top: 0; }
   .status { color: var(--muted); font-size: 14px; min-height: 20px; margin-top: 8px; }
   .log { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 240px; overflow: auto; margin: 0; white-space: pre; }
   .legend { color: var(--muted); font-size: 13px; margin-top: 6px; }
@@ -60,12 +63,13 @@
     <div class="controls">
       <label>Mode
         <select id="mode">
-          <option value="burst">Burst (all at once)</option>
+          <option value="burst">Burst</option>
           <option value="edge">Edge burst (around a window boundary)</option>
           <option value="steady">Steady rate</option>
         </select>
       </label>
       <label>Requests per burst <input id="n" type="number" min="1" value="10"></label>
+      <label class="burst-only" title="Gap between requests in a burst. 0 = all at once (needed to show the Redis race)">Spacing (ms) <input id="spacing" type="number" min="0" value="80"></label>
       <label class="steady-only">Rate (req/s) <input id="rate" type="number" min="1" value="2"></label>
       <label class="steady-only">Duration (s) <input id="duration" type="number" min="1" value="15"></label>
       <label>User <input id="user" value="alice"></label>
@@ -86,7 +90,10 @@
 
   <section class="panel" style="margin-top:14px">
     <div class="chart-wrap"><canvas id="chart"></canvas></div>
-    <div class="legend">Each dot is a request: x = when it was sent, y = remaining quota after it. Red ✕ = blocked. Shape = server. Dashed lines = window boundaries.</div>
+    <div class="chart-bar">
+      <div class="legend">Each dot is a request: x = when it was sent, y = remaining quota after it. Red ✕ = blocked. Shape = server. Dashed lines = window boundaries. Drag or swipe sideways to scroll, pinch or ctrl + scroll to zoom.</div>
+      <button class="ghost" id="fit">Fit all</button>
+    </div>
   </section>
 
   <section class="panel">
@@ -151,6 +158,69 @@ const chart = new Chart($("chart"), {
   plugins: [boundaries],
 });
 
+// ---------- chart scrolling ----------
+// While a run is going the view follows the newest request; drag, swipe or zoom to look back
+const VIEW_SECONDS = 20;
+let lastX = 0;
+let follow = true;
+
+function setView(min, max) {
+  const width = max - min;
+  if (min < 0) { min = 0; max = width; }
+  chart.options.scales.x.min = min;
+  chart.options.scales.x.max = max;
+  chart.update();
+}
+
+function followLatest() {
+  const end = Math.max(VIEW_SECONDS, Math.ceil(lastX + 1));
+  setView(end - VIEW_SECONDS, end);
+}
+
+function fitAll() {
+  follow = false;
+  setView(0, Math.max(1, Math.ceil(lastX + 1)));
+}
+
+function viewRange() {
+  const { min, max } = chart.scales.x;
+  return { min, max, perPx: (max - min) / chart.chartArea.width };
+}
+
+function panBy(px) {
+  follow = false;
+  const { min, max, perPx } = viewRange();
+  setView(min - px * perPx, max - px * perPx);
+}
+
+function zoomAt(clientX, factor) {
+  follow = false;
+  const { min, max } = viewRange();
+  const rect = chart.canvas.getBoundingClientRect();
+  const at = chart.scales.x.getValueForPixel(clientX - rect.left);
+  const width = Math.min(600, Math.max(0.5, (max - min) * factor));
+  const left = at - (at - min) * (width / (max - min));
+  setView(left, left + width);
+}
+
+const wrap = document.querySelector(".chart-wrap");
+let dragFrom = null;
+wrap.addEventListener("pointerdown", (e) => { dragFrom = e.clientX; wrap.classList.add("dragging"); wrap.setPointerCapture(e.pointerId); });
+wrap.addEventListener("pointermove", (e) => {
+  if (dragFrom === null) return;
+  panBy(e.clientX - dragFrom);
+  dragFrom = e.clientX;
+});
+const endDrag = () => { dragFrom = null; wrap.classList.remove("dragging"); };
+wrap.addEventListener("pointerup", endDrag);
+wrap.addEventListener("pointercancel", endDrag);
+wrap.addEventListener("wheel", (e) => {
+  if (e.ctrlKey) { e.preventDefault(); zoomAt(e.clientX, Math.exp(e.deltaY * 0.01)); return; } // pinch or ctrl + scroll
+  const sideways = e.shiftKey ? e.deltaY : e.deltaX; // trackpad swipe or shift + scroll
+  if (Math.abs(sideways) > Math.abs(e.shiftKey ? 0 : e.deltaY)) { e.preventDefault(); panBy(-sideways); }
+}, { passive: false });
+$("fit").onclick = fitAll;
+
 // ---------- requests ----------
 function ports() {
   return $("ports").value.split(",").map((p) => p.trim()).filter(Boolean);
@@ -181,10 +251,13 @@ async function fire() {
 
 function record(p) {
   const allowed = p.status === 200;
-  const point = { ...p, y: allowed ? p.remaining : 0 };
+  const unlimited = current.store === "none"; // nothing to count down, so plot how many got through
+  const point = { ...p, y: unlimited ? stats.allowed + 1 : allowed ? p.remaining : 0 };
   chart.data.datasets[allowed ? 0 : 1].data.push(point);
-  chart.options.scales.x.max = Math.max(chart.options.scales.x.max ?? 0, Math.ceil(p.x + 1));
-  chart.options.scales.y.max = Math.max(chart.options.scales.y.max ?? 1, (current.config.limit ?? current.config.capacity ?? 5) + 0.5);
+  lastX = Math.max(lastX, p.x);
+  if (follow) followLatest();
+  const top = unlimited ? stats.allowed + 1 : current.config.limit ?? current.config.capacity ?? 5;
+  chart.options.scales.y.max = Math.max(chart.options.scales.y.max ?? 1, top + 0.5);
   chart.update();
 
   if (allowed) {
@@ -202,7 +275,16 @@ function log(line) {
   $("log").textContent = line + "\n" + $("log").textContent;
 }
 
-const burst = (n) => Promise.all(Array.from({ length: n }, fire));
+// Fires n requests, `spacing` ms apart so the dots don't pile up on the chart (0 = all at once)
+async function burst(n) {
+  const spacing = Number($("spacing").value) || 0;
+  const pending = [];
+  for (let k = 0; k < n; k++) {
+    if (k > 0 && spacing > 0) await sleep(spacing);
+    pending.push(fire());
+  }
+  await Promise.all(pending);
+}
 
 async function run() {
   clear();
@@ -212,7 +294,7 @@ async function run() {
   try {
     if (mode === "burst") {
       t0 = Date.now();
-      $("status").textContent = `Firing ${n} requests at once…`;
+      $("status").textContent = `Firing ${n} requests…`;
       await burst(n);
     } else if (mode === "edge") {
       const windowMs = current.config.windowMs;
@@ -221,7 +303,9 @@ async function run() {
       const untilBoundary = windowMs - (Date.now() % windowMs);
       if (untilBoundary < 1500) await sleep(untilBoundary + 50);
       t0 = Date.now();
-      await sleep(windowMs - (Date.now() % windowMs) - 300);
+      // Start early enough that the whole first burst lands before the boundary
+      const burstMs = (n - 1) * (Number($("spacing").value) || 0);
+      await sleep(Math.max(0, windowMs - (Date.now() % windowMs) - 300 - burstMs));
       $("status").textContent = `Burst 1: ${n} requests just before the boundary…`;
       await burst(n);
       await sleep(windowMs - (Date.now() % windowMs) + 50);
@@ -246,9 +330,10 @@ async function run() {
 }
 
 function clear() {
-  seq = 0; t0 = 0;
+  seq = 0; t0 = 0; lastX = 0; follow = true;
   stats = { allowed: 0, blocked: 0, perPort: {} };
   chart.data.datasets.forEach((d) => (d.data = []));
+  chart.options.scales.x.min = 0;
   delete chart.options.scales.x.max;
   delete chart.options.scales.y.max;
   chart.update();
@@ -262,7 +347,9 @@ function clear() {
 function select(algo) {
   current = algo;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.name === algo.name));
-  $("config").textContent = `GET /api/${algo.name}  ·  ` + Object.entries(algo.config).map(([k, v]) => `${k} = ${v}`).join("  ·  ");
+  const settings = Object.entries(algo.config).map(([k, v]) => `${k} = ${v}`).join("  ·  ") || "every request is allowed";
+  $("config").textContent = `GET /api/${algo.name}  ·  ${settings}`;
+  chart.options.scales.y.title.text = algo.store === "none" ? "requests let through" : "remaining";
   history.replaceState(null, "", `#${algo.name}`);
   clear();
 }
@@ -270,10 +357,11 @@ function select(algo) {
 function syncModeFields() {
   const steady = $("mode").value === "steady";
   document.querySelectorAll(".steady-only").forEach((el) => (el.style.display = steady ? "" : "none"));
+  document.querySelectorAll(".burst-only").forEach((el) => (el.style.display = steady ? "none" : ""));
 }
 
 // One row of tabs per store, so memory and Redis versions of an algorithm line up
-const STORES = { "memory": "Memory", "redis-naive": "Redis naive (broken)", "redis-lua": "Redis Lua (atomic)" };
+const STORES = { "none": "Baseline", "memory": "Memory", "redis-naive": "Redis naive (broken)", "redis-lua": "Redis Lua (atomic)" };
 
 function rowFor(store) {
   let row = document.querySelector(`.tab-row[data-store="${store}"]`);

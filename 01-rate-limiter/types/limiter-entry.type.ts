@@ -13,7 +13,7 @@ export type LimiterEntry = {
     label: string;
 
     /**
-     * Where it keeps its counts: memory, Redis (naive) or Redis (Lua).
+     * Where it keeps its counts: none (no limit), memory, Redis (naive) or Redis (Lua).
      */
     store: LimiterStore;
 
