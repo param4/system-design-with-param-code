@@ -30,8 +30,15 @@ export class FixedWindowMemoryLimiter implements RateLimiter {
     }
 
     async isAllowed(key: string): Promise<RateLimiterDecision> {
-        // TODO: write it on video
-        throw new Error("Not implemented yet");
+        const currentTime = this.now();
+        const currentCounter = this.counterFor(key, currentTime);
+        const resetAfterSec = DecisionUtil.toSeconds(currentCounter.windowStart + this.windowMs - currentTime);
+
+        if (currentCounter.count >= this.limit) return DecisionUtil.block(this.limit, resetAfterSec);
+
+        currentCounter.count += 1;
+        
+        return DecisionUtil.allow(this.limit, this.limit - currentCounter.count, resetAfterSec);
     }
 
     /**
